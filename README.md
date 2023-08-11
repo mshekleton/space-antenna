@@ -174,3 +174,4 @@ It is also called by the classes in DC motor if the cleanup method is passed arg
 If you see this issue simply don't use GPIO.cleanup() or remove GPIO.cleanup 
 and clear the GPIO you set manually or use python "del" method to destroy the relevant class object,
 to free resources if you need them again.
+# space-antenna
