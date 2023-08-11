@@ -55,7 +55,7 @@ class SimpleRotctld:
                 response = "RPRT 0\n"
             elif cmd[0] == "p":
                 az, el = self.rotator.get_position()
-                response = f"{az:.1f}\n{el:.1f}\n"
+                response = f"{az:.2f}\n{el:.2f}\n"
             else:
                 response = "RPRT -1\n"
 
