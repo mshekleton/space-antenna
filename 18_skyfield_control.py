@@ -1,31 +1,63 @@
 from skyfield.api import Topos, load, EarthSatellite
+import requests
+import time
+import serial
 
-def calculate_position(tle_line1, tle_line2, observer_lat, observer_lon):
-    # Load satellite from provided TLE data
-    satellites = load.tle(tle_line1, tle_line2)
+SERIAL_PORT = '/dev/ttyUSB0'
+SERIAL_BAUDRATE = 115200
 
-    # Set observer's location
-    observer_location = Topos(observer_lat, observer_lon)
+def get_iss_tle():
+    url = "https://www.celestrak.com/NORAD/elements/stations.txt"
+    response = requests.get(url)
+    response.raise_for_status()
 
-    # Load a timescale object
+    lines = response.text.strip().split("\n")
+    for idx, line in enumerate(lines):
+        if "ISS (ZARYA)" in line:
+            return lines[idx], lines[idx + 1], lines[idx + 2]
+    raise ValueError("Failed to find ISS TLE data")
+
+def main():
+    # Initialize the serial port
+    ser = serial.Serial(SERIAL_PORT, SERIAL_BAUDRATE, timeout=1)
+    ser.flush()
+
+    # Get the latest ISS TLE data
+    line1, line2, line3 = get_iss_tle()
+
+    # Load TLE data into Skyfield EarthSatellite object
+    satellite = EarthSatellite(line2, line3, line1)
+
+    # Load Skyfield data
     ts = load.timescale()
-    t = ts.now()
 
-    # Create an Earth object and get its position at current time
-    earth = load('de421.bsp')['earth']
-    earth_location = earth + observer_location
+    # Get user location
+    lat = 41.81472227118011
+    lon = -72.48343714114537
 
-    # Calculate satellite's topocentric position
-    difference = satellites - earth_location
-    topocentric = difference.at(t)
-    alt, az, distance = topocentric.altaz()
+    observer = Topos(latitude_degrees=lat, longitude_degrees=lon)
 
-    return alt.degrees, az.degrees
+    try:
+        while True:
+            t0 = ts.now()
+            difference = satellite - observer
+            topocentric = difference.at(t0)
 
-# Example usage:
-tle_line1 = '1 25544U 98067A   21274.45768913  .00001303  00000-0  26603-4 0  9992'
-tle_line2 = '2 25544  51.6451 295.6731 0004417  55.4743 304.6711 15.48916314293504'
-observer_lat = '37.7749 N'
-observer_lon = '122.4194 W'
-alt, az = calculate_position(tle_line1, tle_line2, observer_lat, observer_lon)
-print(f'Altitude: {alt} degrees, Azimuth: {az} degrees')
+            alt, az, d = topocentric.altaz()
+
+            print(f"\nThe ISS is at an altitude of {alt.degrees:.2f} degrees")
+            print(f"The ISS is at an azimuth (elevation) of {az.degrees:.2f} degrees")
+
+            # Send data to serial port
+            data_string = f"{alt.degrees:.2f}, {az.degrees:.2f}\n"
+            ser.write(data_string.encode('utf-8'))
+
+            time.sleep(1)  # Update every 10 seconds. Change as desired.
+
+    except KeyboardInterrupt:
+        print("\nExiting...")
+    finally:
+        ser.close()
+
+if __name__ == "__main__":
+    main()
