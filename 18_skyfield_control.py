@@ -79,7 +79,7 @@ def main():
             #print(f"The ISS is at an azimuth (elevation) of {az.degrees:.2f} degrees")
 
             # Send data to serial port
-            data_string = f"{alt.degrees:.2f}, {az.degrees:.2f}\n"
+            data_string = f"{az.degrees:.2f}, {alt.degrees:.2f}\n"
             print(data_string)
             ser.write(data_string.encode('utf-8'))
 
