@@ -82,11 +82,11 @@ def main():
             if alt.degrees > 0:
                 data_string = f"{az.degrees:.2f}, {alt.degrees:.2f}\n"
             else:
-                data_string = "0.00, 0.00"
+                data_string = "0.00, 0.00\n"
             print(data_string)
             ser.write(data_string.encode('utf-8'))
 
-            time.sleep(.05)  # Update every 10 seconds. Change as desired.
+            time.sleep(.1)
 
     except KeyboardInterrupt:
         print("\nExiting...")
