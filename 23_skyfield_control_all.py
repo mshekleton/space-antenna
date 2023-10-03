@@ -109,21 +109,37 @@ def get_satellite_tle(stdscr):
 
     current_top = 0
     page_size = curses.LINES - 3
+    satellite_choice = ""  # Variable to hold the user's satellite choice
+
     while True:
         list_satellites(satellites, current_top)
+        stdscr.addstr(f"Select a satellite by its number: {satellite_choice}")  # Display prompt
+        stdscr.refresh()
         c = stdscr.getch()
         if c == curses.KEY_UP and current_top > 0:
             current_top -= 1
         elif c == curses.KEY_DOWN and current_top + page_size < len(satellites):
             current_top += 1
+        elif c in range(48, 58):  # ASCII values for digits 0-9
+            satellite_choice += chr(c)  # Append digit to satellite_choice
         elif c == 10:  # Enter key
-            break
-
-    satellite_choice = get_user_choice("Select a satellite by its number: ", list(satellites.keys()))
+            try:
+                satellite_choice = int(satellite_choice)  # Convert to int
+                if 1 <= satellite_choice <= len(satellites):
+                    break  # Valid choice, break out of the loop
+                else:
+                    stdscr.addstr("Invalid input. Please enter a number within the valid range.\n")
+                    satellite_choice = ""  # Reset satellite_choice
+                    stdscr.refresh()
+            except ValueError:
+                stdscr.addstr("Invalid input. Please enter a number.\n")
+                satellite_choice = ""  # Reset satellite_choice
+                stdscr.refresh()
 
     # Return the TLE data for the selected satellite
     selected_satellite = list(satellites.keys())[satellite_choice - 1]
     return satellites[selected_satellite]
+
 
 exit_flag = False  # Global flag to control loop exit
 
