@@ -48,7 +48,8 @@ def get_tle_data(url):
 
 def get_satellite_tle(stdscr):
     #stdscr.clear()
-    curses.cbreak()
+    #curses.cbreak()
+    curses.halfdelay(1)  # waits for 0.1 seconds for user input
     curses.echo()
     curses.curs_set(1)  # Show cursor
     stdscr.nodelay(0)  # Set to blocking mode
@@ -98,12 +99,27 @@ def get_satellite_tle(stdscr):
     # Clear the screen
     #stdscr.clear()
 
-    # List all available satellites in the selected group
-    for idx, name in enumerate(satellites.keys(), start=1):
-        stdscr.addstr(f"{idx}. {name}\n")
-    stdscr.refresh()
 
-    satellite_choice = get_user_choice("Select a satellite by its number: ", satellites)
+    def list_satellites(satellites, current_top):
+        stdscr.clear()
+        page_size = curses.LINES - 3
+        for idx, name in enumerate(list(satellites.keys())[current_top:current_top + page_size], start=current_top + 1):
+            stdscr.addstr(f"{idx}. {name}\n")
+        stdscr.refresh()
+
+    current_top = 0
+    page_size = curses.LINES - 3
+    while True:
+        list_satellites(satellites, current_top)
+        c = stdscr.getch()
+        if c == curses.KEY_UP and current_top > 0:
+            current_top -= 1
+        elif c == curses.KEY_DOWN and current_top + page_size < len(satellites):
+            current_top += 1
+        elif c == 10:  # Enter key
+            break
+
+    satellite_choice = get_user_choice("Select a satellite by its number: ", list(satellites.keys()))
 
     # Return the TLE data for the selected satellite
     selected_satellite = list(satellites.keys())[satellite_choice - 1]
@@ -163,7 +179,13 @@ def main(stdscr):
                     data_string = f"{az.degrees:.2f}, {alt.degrees:.2f}\n"
                 else:
                     data_string = "0.00, 0.00\n"
-                print(data_string)
+                #print(data_string)
+                y, x = stdscr.getyx()  # Get current position of the cursor
+                stdscr.move(y-1, 0)  # Move cursor to the beginning of the display line
+                stdscr.clrtoeol()  # Clear to the end of the line to remove old text
+                stdscr.addstr(y-1, 0, "Azimuth, Altitude: " + data_string)  # Display the new text
+                stdscr.refresh()  # Update the screen
+
                 ser.write(data_string.encode('utf-8'))
                 
                 time.sleep(.1)
