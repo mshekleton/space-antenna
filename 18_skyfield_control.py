@@ -103,7 +103,7 @@ def main():
 
             # Send data to serial port
             if alt.degrees > 0:
-                data_string = f"{adj_az.degrees:.2f}, {alt.degrees:.2f}\n"
+                data_string = f"{adj_az:.2f}, {alt.degrees:.2f}\n"
             else:
                 data_string = "0.00, 0.00\n"
             print(data_string)
