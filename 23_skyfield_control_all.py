@@ -112,9 +112,7 @@ def get_satellite_tle(stdscr):
     satellite_choice = ""  # Variable to hold the user's satellite choice
 
     while True:
-        list_satellites(satellites, current_top)
-        stdscr.addstr(f"Select a satellite by its number: {satellite_choice}")  # Display prompt
-        stdscr.refresh()
+        list_satellites(satellites, current_top, satellite_choice)
         c = stdscr.getch()
         if c == curses.KEY_UP and current_top > 0:
             current_top -= 1
@@ -122,6 +120,7 @@ def get_satellite_tle(stdscr):
             current_top += 1
         elif c in range(48, 58):  # ASCII values for digits 0-9
             satellite_choice += chr(c)  # Append digit to satellite_choice
+            list_satellites(satellites, current_top, satellite_choice)  # Update the screen with the new satellite_choice
         elif c == 10:  # Enter key
             try:
                 satellite_choice = int(satellite_choice)  # Convert to int

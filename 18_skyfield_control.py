@@ -46,6 +46,25 @@ def get_satellite_tle():
     selected_satellite = list(satellites.keys())[choice - 1]
     return satellites[selected_satellite]
 
+def adjust_azimuth(current_azimuth, previous_azimuth):
+    delta_azimuth = current_azimuth - previous_azimuth
+    
+    # If the change in azimuth is significantly large, 
+    # it suggests a crossover the zero point
+    if abs(delta_azimuth) > 180:
+        # Determine the direction of rotation
+        if delta_azimuth > 0:
+            # Moving counterclockwise
+            adjusted_azimuth = current_azimuth - 360
+        else:
+            # Moving clockwise
+            adjusted_azimuth = current_azimuth + 360
+    else:
+        # No crossover, no adjustment needed
+        adjusted_azimuth = current_azimuth
+    
+    return adjusted_azimuth
+
 
 def main():
     # Initialize the serial port
@@ -67,6 +86,7 @@ def main():
 
     observer = Topos(latitude_degrees=lat, longitude_degrees=lon)
 
+    prev_az = 359
     try:
         while True:
             t0 = ts.now()
@@ -75,12 +95,15 @@ def main():
 
             alt, az, d = topocentric.altaz()
 
+            adj_az = adjust_azimuth(az.degrees, prev_az)
+            prev_az = adj_az
+
             #print(f"\nThe ISS is at an altitude of {alt.degrees:.2f} degrees")
             #print(f"The ISS is at an azimuth (elevation) of {az.degrees:.2f} degrees")
 
             # Send data to serial port
             if alt.degrees > 0:
-                data_string = f"{az.degrees:.2f}, {alt.degrees:.2f}\n"
+                data_string = f"{adj_az.degrees:.2f}, {alt.degrees:.2f}\n"
             else:
                 data_string = "0.00, 0.00\n"
             print(data_string)
