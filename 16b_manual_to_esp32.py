@@ -4,8 +4,10 @@ import time
 
 ROTCTLD_HOST = "localhost"
 ROTCTLD_PORT = 4533  # default port for rotctld
-SERIAL_PORT0 = "/dev/ttyUSB0"  # adjust based on your USB port
-SERIAL_PORT1 = "/dev/ttyUSB1"
+#SERIAL_PORT0 = "/dev/ttyUSB0"  # adjust based on your USB port
+SERIAL_PORT0 = "/dev/ttyACM0"
+#SERIAL_PORT1 = "/dev/ttyUSB1"
+SERIAL_PORT1 = "/dev/ttyAMA10"
 SERIAL_BAUDRATE = 115200  # adjust to match ESP32 baudrate
 
 def get_position_data():

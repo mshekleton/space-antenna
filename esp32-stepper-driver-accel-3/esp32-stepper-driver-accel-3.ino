@@ -7,7 +7,7 @@
 
 // As in StepperDemo for Motor 1 on ESP32
 #define dirPinStepper 13
-#define enablePinStepper 26
+#define enablePinStepper 11
 #define stepPinStepper 12
 #define PULSES_PER_DEG 20
 

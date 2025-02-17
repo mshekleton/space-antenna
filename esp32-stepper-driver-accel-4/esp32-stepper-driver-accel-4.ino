@@ -1,16 +1,26 @@
 #include "FastAccelStepper.h"
 
 // As in StepperDemo for Motor 1 on ESP32
-#define dirPinStepperAzimuth 13
-#define enablePinStepperAzimuth 26
-#define stepPinStepperAzimuth 12
+#define dirPinStepperAzimuth 14
+#define dirPinStepperAzimuthLow 13
+#define enablePinStepperAzimuth 12
+#define enablePinStepperAzimuthLow 11
+#define stepPinStepperAzimuth 10
+#define stepPinStepperAzimuthLow 9
+#define limitPinAzimuth 46
+#define limitPinAzimuthLow 3
 
-#define dirPinStepperAltitude 27
-#define enablePinStepperAltitude 14
-#define stepPinStepperAltitude 33
+#define dirPinStepperAltitude 4
+#define dirPinStepperAltitudeLow 5
+#define enablePinStepperAltitude 6
+#define enablePinStepperAltitudeLow 7
+#define stepPinStepperAltitude 15
+#define stepPinStepperAltitudeLow 16
+#define limitPinAltitude 17
+#define limitPinAltitudeLow 18
 
-const int sparePin1 = 25; // Replace with the GPIO pin number you want to use
-const int sparePin2 = 32; // Replace with another GPIO pin number you want to use
+//const int sparePin1 = 25; // Replace with the GPIO pin number you want to use
+//const int sparePin2 = 32; // Replace with another GPIO pin number you want to use
 
 #define AZ_PULSES_PER_DEG 20
 #define ALT_PULSES_PER_DEG 33.333 //200 steps/rev * 1:30 gearbox = 6000 steps/rev. 33.333 = (6000/360) * 2 (half stepping)
@@ -18,6 +28,11 @@ const int sparePin2 = 32; // Replace with another GPIO pin number you want to us
 #define MIN_AZ_DEG -360
 #define MAX_ALT_DEG 90
 #define MIN_ALT_DEG 0
+
+#define LED_BLUE HIGH
+#define LED_GREEN LOW
+#define LED_PIN 38 
+
 
 FastAccelStepperEngine engine = FastAccelStepperEngine();
 FastAccelStepper *stepperAzimuth = NULL;
@@ -27,14 +42,34 @@ FastAccelStepper *stepperAltitude = NULL;
 bool isAzimuthMotorActive = true;
 
 void setup() {
-  pinMode(sparePin1, OUTPUT); // Set sparePin1 as an output pin
-  pinMode(sparePin2, OUTPUT); // Set sparePin2 as an output pin
+  Serial.begin(115200);
 
-  digitalWrite(sparePin1, LOW); // Set sparePin1 to low (ground)
-  digitalWrite(sparePin2, LOW); // Set sparePin2 to low (ground)
+  pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, LOW);
+
+  pinMode(dirPinStepperAzimuthLow, OUTPUT);
+  pinMode(enablePinStepperAzimuthLow, OUTPUT);
+  pinMode(stepPinStepperAzimuthLow, OUTPUT);
+  pinMode(limitPinAzimuthLow, OUTPUT);
+
+  digitalWrite(dirPinStepperAzimuthLow, LOW);
+  digitalWrite(enablePinStepperAzimuthLow, HIGH);
+  digitalWrite(stepPinStepperAzimuthLow, LOW);
+  digitalWrite(limitPinAzimuthLow, LOW);
   
+  pinMode(dirPinStepperAltitudeLow, OUTPUT);
+  pinMode(enablePinStepperAltitudeLow, OUTPUT);
+  pinMode(stepPinStepperAltitudeLow, OUTPUT);
+  pinMode(limitPinAltitudeLow, OUTPUT);
+
+  digitalWrite(dirPinStepperAltitudeLow, LOW);
+  digitalWrite(enablePinStepperAltitudeLow, HIGH);
+  digitalWrite(stepPinStepperAltitudeLow, LOW);
+  digitalWrite(limitPinAltitudeLow, LOW);
+
+
   engine.init();
-  
+
   stepperAzimuth = engine.stepperConnectToPin(stepPinStepperAzimuth);
   stepperAltitude = engine.stepperConnectToPin(stepPinStepperAltitude);
 
@@ -53,7 +88,6 @@ void setup() {
     stepperAltitude->setSpeedInUs(1000);  // the parameter is us/step !!!
     stepperAltitude->setAcceleration(500);
 
-    Serial.begin(115200);
     Serial.println("Enter azimuth and altitude degrees separated by a comma (e.g., 100, 90):");
   }
 }
@@ -91,7 +125,4 @@ void loop() {
     }
   }
 
-//  // Call the run function of both motors to keep them moving simultaneously
-//  stepperAzimuth->run();
-//  stepperAltitude->run();
 }
