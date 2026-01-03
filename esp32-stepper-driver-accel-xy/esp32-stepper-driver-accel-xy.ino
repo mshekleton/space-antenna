@@ -1,22 +1,33 @@
 /*
-  ESP32 Alt/Az -> X-Y Mount Controller (FastAccelStepper) with Maintenance Positions
+  ESP32-WROOM-DA (Freenove) — Alt/Az -> X/Y Mount Controller (FastAccelStepper)
+  + Persistent XOFF
+  + Maintenance positions (HOME/ZENITH/MOTOR/ACCESS, N/S/E/W, NE/NW/SE/SW)
+
+  Key changes vs your prior sketch:
+  - Removed all *_Low pins (they were undefined and also problematic on WROOM when mapped to flash pins).
+  - Uses only WROOM-safe GPIOs (no GPIO6–11, no 34–39 as outputs, no >39).
+  - LED_BUILTIN is defined if missing.
 
   Serial commands:
-    AZ,ALT            e.g. 110,25
-    XOFF=NNN          e.g. XOFF=30   (CW deg from North to +X axis; saved)
-    XOFF?             print current XOFF
-    HOME              move to zenith (X=90, Y=90)  (alias: ZENITH)
-    MOTOR             move to motor-access position (X=90, Y=90)  (alias: ACCESS)
-    N / S / E / W     move to horizon cardinal points (X-Y geometry)
-    NE / NW / SE / SW move to horizon intercardinal points
-    POS?              print current last commanded X/Y in degrees and steps
-    HELP              help text
+    AZ,ALT            e.g. 110,25         (Az deg, Alt deg)
+    XOFF=NNN          e.g. XOFF=30        (CW degrees from North to +X axis; saved in NVS)
+    XOFF?             prints current XOFF
+    POS?              prints last commanded X/Y (deg + steps)
+    HOME | ZENITH     -> X=90, Y=90
+    MOTOR | ACCESS    -> X=90, Y=90
+    N S E W           -> horizon cardinal (uses Alt=0, Az=dir, then converts using XOFF)
+    NE NW SE SW       -> horizon intercardinal
+    HELP              prints help
 
-  Notes:
-    - Cardinal moves are implemented by commanding Alt=0 and Az=direction, then converting with your current XOFF.
-      This makes them consistent with the same geometry used for normal tracking.
-    - If you want cardinal positions to ignore XOFF (i.e., be "mount-frame" not "earth-frame"), tell me and I will
-      add a flag or separate commands (e.g., MN/MX).
+  Assumptions:
+    - Azimuth convention: 0=N, 90=E, increasing clockwise.
+    - XOFF is CW degrees from North to the mount +X axis (once set, persists).
+    - Output X,Y are clamped to [0,180] degrees.
+    - Steps per degree = 10 for both axes.
+
+  Notes on limit pins:
+    - This sketch does NOT home. It only defines limit pins for future use.
+    - If your limit switches are wired, we can add homing logic next.
 */
 
 #include <Arduino.h>
@@ -24,26 +35,26 @@
 #include <Preferences.h>
 #include <math.h>
 
-// --------------------------- PINS (EDIT THESE) ---------------------------
-#define dirPinStepperX        14
-#define dirPinStepperXLow     13
-#define enablePinStepperX     12
-#define enablePinStepperXLow  11
-#define stepPinStepperX       10
-#define stepPinStepperXLow     9
-#define limitPinX             46
-#define limitPinXLow           3
+// --------------------------- LED ---------------------------
+#ifndef LED_BUILTIN
+#define LED_BUILTIN 2  // typical on ESP32 dev boards
+#endif
+#define LED_PIN LED_BUILTIN
 
-#define dirPinStepperY         4
-#define dirPinStepperYLow      5
-#define enablePinStepperY      6
-#define enablePinStepperYLow   7
-#define stepPinStepperY       15
-#define stepPinStepperYLow    16
-#define limitPinY             17
-#define limitPinYLow          18
+// --------------------------- WROOM-SAFE PINS ---------------------------
+// IMPORTANT: Do NOT use GPIO6..11 (SPI flash). Avoid GPIO34..39 for OUTPUT (input-only).
 
-#define LED_PIN 38
+// X axis
+#define dirPinStepperX     25
+#define enablePinStepperX  26
+#define stepPinStepperX    27
+#define limitPinX          32   // input OK
+
+// Y axis
+#define dirPinStepperY     14
+#define enablePinStepperY  33   // output-capable; avoids strap pins
+#define stepPinStepperY    13
+#define limitPinY          15   // input OK, but note: GPIO15 is a strap pin (usually fine if switch doesn't pull it at boot)
 
 // --------------------------- CONFIG ---------------------------
 #define STEPS_PER_DEG 10.0f
@@ -81,10 +92,8 @@ static inline float wrap360(float d) {
   if (x < 0) x += 360.0f;
   return x;
 }
-
 static inline float deg2rad(float d) { return d * (float)M_PI / 180.0f; }
 static inline float rad2deg(float r) { return r * 180.0f / (float)M_PI; }
-
 static inline float clampf(float v, float lo, float hi) {
   if (v < lo) return lo;
   if (v > hi) return hi;
@@ -101,6 +110,7 @@ static void rotateAboutUpCW(float e, float n, float u, float cw_deg, float& e2, 
   u2 = u;
 }
 
+// Convert Alt/Az (Alt 0..90, Az 0=N,90=E) to ENU unit vector
 static void altAzToENU(float alt_deg, float az_deg, float& e, float& n, float& u) {
   float alt = deg2rad(alt_deg);
   float az  = deg2rad(wrap360(az_deg));
@@ -109,6 +119,9 @@ static void altAzToENU(float alt_deg, float az_deg, float& e, float& n, float& u
   u = sinf(alt);
 }
 
+// Convert ENU vector in mount frame to X/Y angles (degrees)
+// X = atan2( sqrt(E^2 + U^2), N )
+// Y = atan2( sqrt(N^2 + U^2), E )
 static void enuToXYAngles(float e, float n, float u, float& x_deg, float& y_deg) {
   float r = sqrtf(e*e + n*n + u*u);
   if (r <= 0.0f) { x_deg = 90.0f; y_deg = 90.0f; return; }
@@ -125,7 +138,7 @@ static void altAzToXY(float alt_deg, float az_deg, float xoff_deg, float& x_deg,
   float e, n, u;
   altAzToENU(alt_deg, az_deg, e, n, u);
 
-  // Convert world frame -> mount frame by rotating CCW by xoff (i.e. CW by -xoff)
+  // World -> mount frame: rotate CCW by xoff (equivalently CW by -xoff)
   float em, nm, um;
   rotateAboutUpCW(e, n, u, -xoff_deg, em, nm, um);
 
@@ -167,10 +180,14 @@ static void moveXYDegrees(float x_deg, float y_deg) {
 
   if (stepperX) stepperX->moveTo(x_steps);
   if (stepperY) stepperY->moveTo(y_steps);
+
+  // blink LED briefly (optional)
+  digitalWrite(LED_PIN, HIGH);
+  delay(20);
+  digitalWrite(LED_PIN, LOW);
 }
 
-static void moveToCardinalAz(float az_deg) {
-  // Horizon (Alt=0) at requested azimuth, using same conversion and current XOFF
+static void moveToHorizonAz(float az_deg) {
   float x_deg, y_deg;
   altAzToXY(0.0f, az_deg, g_xoff_deg, x_deg, y_deg);
   moveXYDegrees(x_deg, y_deg);
@@ -185,14 +202,15 @@ static void printHelp() {
   Serial.println("  XOFF?             show current xoff");
   Serial.println("  POS?              show last commanded X/Y");
   Serial.println("Maintenance:");
-  Serial.println("  HOME | ZENITH      -> X=90, Y=90");
-  Serial.println("  MOTOR | ACCESS     -> X=90, Y=90");
-  Serial.println("  N S E W            -> horizon cardinal points");
-  Serial.println("  NE NW SE SW        -> horizon intercardinal points");
-  Serial.println("  HELP               -> this help");
+  Serial.println("  HOME | ZENITH     -> X=90, Y=90");
+  Serial.println("  MOTOR | ACCESS    -> X=90, Y=90");
+  Serial.println("  N S E W           -> horizon cardinal points");
+  Serial.println("  NE NW SE SW       -> horizon intercardinal points");
+  Serial.println("  HELP              -> this help");
   Serial.println();
   Serial.println("Az convention: 0=N, 90=E, increasing clockwise. Alt: 0..90.");
-  Serial.println("XOFF: CW degrees from North to mount +X axis.");
+  Serial.println("XOFF: CW degrees from North to mount +X axis (persisted).");
+  Serial.println("Steps: 10 per degree; X/Y range 0..180.");
   Serial.println();
 }
 
@@ -226,62 +244,45 @@ static String upperTrim(String s) {
 void setup() {
   Serial.begin(115200);
 
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, LOW);
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, LOW);
 
-  // Low pins (unchanged pattern from your original code)
-  pinMode(dirPinStepperXLow, OUTPUT);
-  pinMode(enablePinStepperXLow, OUTPUT);
-  pinMode(stepPinStepperXLow, OUTPUT);
-  pinMode(limitPinXLow, OUTPUT);
-
-  digitalWrite(dirPinStepperXLow, LOW);
-  digitalWrite(enablePinStepperXLow, HIGH);
-  digitalWrite(stepPinStepperXLow, LOW);
-  digitalWrite(limitPinXLow, LOW);
-
-  pinMode(dirPinStepperYLow, OUTPUT);
-  pinMode(enablePinStepperYLow, OUTPUT);
-  pinMode(stepPinStepperYLow, OUTPUT);
-  pinMode(limitPinYLow, OUTPUT);
-
-  digitalWrite(dirPinStepperYLow, LOW);
-  digitalWrite(enablePinStepperYLow, HIGH);
-  digitalWrite(stepPinStepperYLow, LOW);
-  digitalWrite(limitPinYLow, LOW);
-
-  // Load XOFF
-  prefs.begin(NVS_NAMESPACE, false);
-  g_xoff_deg = prefs.getFloat(NVS_KEY_XOFF, 0.0f);
-  prefs.end();
+  // Limit pins are inputs (no homing logic yet)
+  pinMode(limitPinX, INPUT_PULLUP);
+  pinMode(limitPinY, INPUT_PULLUP);
 
   engine.init();
 
   stepperX = engine.stepperConnectToPin(stepPinStepperX);
   stepperY = engine.stepperConnectToPin(stepPinStepperY);
 
-  if (stepperX && stepperY) {
-    stepperX->setDirectionPin(dirPinStepperX);
-    stepperX->setEnablePin(enablePinStepperX);
-    stepperX->setAutoEnable(true);
-    stepperX->setSpeedInUs(SPEED_US_PER_STEP);
-    stepperX->setAcceleration(ACCEL_STEPS_PER_S2);
-
-    stepperY->setDirectionPin(dirPinStepperY);
-    stepperY->setEnablePin(enablePinStepperY);
-    stepperY->setAutoEnable(true);
-    stepperY->setSpeedInUs(SPEED_US_PER_STEP);
-    stepperY->setAcceleration(ACCEL_STEPS_PER_S2);
-
-    Serial.println("X-Y mount controller ready.");
-    Serial.print("Current XOFF (CW from North) = ");
-    Serial.println(g_xoff_deg, 3);
-    printHelp();
-  } else {
-    Serial.println("ERROR: Could not init steppers. Check pins and engine init.");
+  if (!stepperX || !stepperY) {
+    Serial.println("ERROR: Could not init steppers. Check step pins and engine init.");
+    return;
   }
+
+  // Configure steppers
+  stepperX->setDirectionPin(dirPinStepperX);
+  stepperX->setEnablePin(enablePinStepperX);
+  stepperX->setAutoEnable(true);
+  stepperX->setSpeedInUs(SPEED_US_PER_STEP);
+  stepperX->setAcceleration(ACCEL_STEPS_PER_S2);
+
+  stepperY->setDirectionPin(dirPinStepperY);
+  stepperY->setEnablePin(enablePinStepperY);
+  stepperY->setAutoEnable(true);
+  stepperY->setSpeedInUs(SPEED_US_PER_STEP);
+  stepperY->setAcceleration(ACCEL_STEPS_PER_S2);
+
+  // Load persistent XOFF
+  prefs.begin(NVS_NAMESPACE, false);
+  g_xoff_deg = prefs.getFloat(NVS_KEY_XOFF, 0.0f);
+  prefs.end();
+
+  Serial.println("X-Y mount controller ready (ESP32-WROOM).");
+  Serial.print("Current XOFF (CW from North) = ");
+  Serial.println(g_xoff_deg, 3);
+  printHelp();
 }
 
 void loop() {
@@ -294,10 +295,7 @@ void loop() {
   String cmd = upperTrim(input);
 
   // HELP
-  if (cmd == "HELP") {
-    printHelp();
-    return;
-  }
+  if (cmd == "HELP") { printHelp(); return; }
 
   // POS?
   if (cmd == "POS?") {
@@ -340,23 +338,23 @@ void loop() {
     return;
   }
 
-  // Maintenance aliases: HOME/ZENITH/MOTOR/ACCESS -> 90,90
+  // Maintenance: direct positions
   if (cmd == "HOME" || cmd == "ZENITH" || cmd == "MOTOR" || cmd == "ACCESS") {
     moveXYDegrees(90.0f, 90.0f);
     return;
   }
 
-  // Cardinal / intercardinal horizon points (earth-frame)
-  if (cmd == "N")  { moveToCardinalAz(0.0f);   return; }
-  if (cmd == "NE") { moveToCardinalAz(45.0f);  return; }
-  if (cmd == "E")  { moveToCardinalAz(90.0f);  return; }
-  if (cmd == "SE") { moveToCardinalAz(135.0f); return; }
-  if (cmd == "S")  { moveToCardinalAz(180.0f); return; }
-  if (cmd == "SW") { moveToCardinalAz(225.0f); return; }
-  if (cmd == "W")  { moveToCardinalAz(270.0f); return; }
-  if (cmd == "NW") { moveToCardinalAz(315.0f); return; }
+  // Maintenance: horizon cardinals (earth-frame)
+  if (cmd == "N")  { moveToHorizonAz(0.0f);   return; }
+  if (cmd == "NE") { moveToHorizonAz(45.0f);  return; }
+  if (cmd == "E")  { moveToHorizonAz(90.0f);  return; }
+  if (cmd == "SE") { moveToHorizonAz(135.0f); return; }
+  if (cmd == "S")  { moveToHorizonAz(180.0f); return; }
+  if (cmd == "SW") { moveToHorizonAz(225.0f); return; }
+  if (cmd == "W")  { moveToHorizonAz(270.0f); return; }
+  if (cmd == "NW") { moveToHorizonAz(315.0f); return; }
 
-  // Otherwise expect "AZ,ALT"
+  // Otherwise: expect "AZ,ALT"
   float az = 0.0f, alt = 0.0f;
   if (!parseAzAlt(input, az, alt)) {
     Serial.println("Invalid input. Use AZ,ALT or maintenance commands. Type HELP.");
